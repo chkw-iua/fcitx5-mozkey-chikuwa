@@ -47,7 +47,7 @@
 
 ## クイックスタート (.deb の導入と初期設定)
 
-ビルド済みの `.deb` パッケージを使用して、数分でセットアップできます。
+配布されているビルド済み `.deb` パッケージ（[Releases](https://github.com/chkw-iua/fcitx5-mozkey-chikuwa/releases) 等から入手、または下記の「[ソースコードからのビルド](#ソースコードからのビルド-開発者上級者向け)」で生成）を使用してセットアップします。
 
 ### 前提: Fcitx5 の準備（Ubuntu 標準 IBus から切り替える場合）
 
@@ -62,16 +62,18 @@ im-config -n fcitx5
 
 ### Step 1: パッケージのインストール
 
-手元のパッケージファイルを `apt` 経由で依存パッケージとともにインストールし、Fcitx5 デーモンを再起動します：
+入手した `.deb` パッケージを `apt` 経由で依存パッケージとともにインストールし、Fcitx5 デーモンを再起動します（ダウンロードしたファイル名・パスに合わせて読み替えてください）：
 
 ```bash
-# パッケージのインストール（パスは適宜調整してください）
+# 例: ダウンロードした .deb ファイルがあるディレクトリで実行
 sudo apt update
-sudo apt install ./packaging/out/fcitx5-mozkey-chikuwa_0.1.0+git20261113_amd64.deb
+sudo apt install ./fcitx5-mozkey-chikuwa_<version>_amd64.deb
 
 # Fcitx5 を再起動してアドオンを認識させる
 fcitx5 -r -d
 ```
+
+> ソースコードから自分でビルドした場合は、生成先である `packaging/out/` 配下の `.deb` ファイル（例: `./packaging/out/fcitx5-mozkey-chikuwa_*_amd64.deb`）を指定してください。
 
 ### Step 2: Fcitx5 への Mozkey の追加
 
