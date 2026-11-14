@@ -95,6 +95,11 @@ fcitx5 -r -d
 ## ライセンス・謝辞
 
 - 本リポジトリの独自スクリプト・パッチ・設定ファイルは [BSD-3-Clause](LICENSE) です。
-- `unix/fcitx5/` は [fcitx/mozc](https://github.com/fcitx/mozc)（Google Mozc / Fcitx Authors, BSD-3-Clause）に由来します。
-- ビルド対象の上流プロジェクトはそれぞれ [koyasi777/mozkey](https://github.com/koyasi777/mozkey)（BSD-3-Clause）および [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp)（MIT）のライセンスに従います。
+- `unix/fcitx5/` は [fcitx/mozc](https://github.com/fcitx/mozc) に由来する複合ライセンスです：
+  - `mozc_engine.*`, `mozc_engine_factory.cc`, `i18nwrapper.h` は **LGPL-2.1+**（CSSlayer / Weng Xuetian）
+  - その他の C++ ファイルは **BSD-3-Clause**（Google Inc. / Weng Xuetian）
+  - 生成される `fcitx5-mozkey.so` は **LGPL-2.1+**（Abseil 結合時は **LGPL-3.0+**）に従います。
+- `llama-server` は [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp)（MIT License）に従います。
+- バンドルされる Zenz モデル（`zenz-v3.2-small-Q5_K_M.gguf`）は [三輪敬太 氏](https://huggingface.co/Miwa-Keita/zenz-v3.2-small-gguf)（Apache-2.0）および基底モデルを事前学習した [京都大学 黒橋・河原・村脇研究室 / KU-NLP](https://huggingface.co/ku-nlp/gpt2-small-japanese-char)（CC BY-SA 4.0）の成果に依拠しています。
+- 上流 Mozkey は [koyasi777/mozkey](https://github.com/koyasi777/mozkey)（BSD-3-Clause / Google Inc.）に従います。
 

@@ -60,8 +60,11 @@ install -m 644 "${ROOT_DIR}/packaging/fcitx5/addon/mozkey.conf" "${STAGE_DIR}/us
 install -m 644 "${ROOT_DIR}/packaging/fcitx5/inputmethod/mozkey.conf" "${STAGE_DIR}/usr/share/fcitx5/inputmethod/mozkey.conf"
 install -m 644 "${ROOT_DIR}/packaging/apparmor/mozkey" "${STAGE_DIR}/etc/apparmor.d/abstractions/mozc.d/mozkey"
 
+mkdir -p "${STAGE_DIR}/usr/share/doc/${PKG_NAME}"
+install -m 644 "${ROOT_DIR}/packaging/copyright" "${STAGE_DIR}/usr/share/doc/${PKG_NAME}/copyright"
+install -m 644 "${ROOT_DIR}/LICENSE" "${STAGE_DIR}/usr/share/doc/${PKG_NAME}/LICENSE"
+
 if grep -q "mozcdic_ut_daily_local" "${ROOT_DIR}/upstream/src/data/dictionary_oss/BUILD.bazel"; then
-  mkdir -p "${STAGE_DIR}/usr/share/doc/${PKG_NAME}"
   install -m 644 "${ROOT_DIR}/upstream/src/data/installer/DICTIONARY_NOTICES.md" "${STAGE_DIR}/usr/share/doc/${PKG_NAME}/DICTIONARY_NOTICES.md"
   install -m 644 "${ROOT_DIR}/upstream/src/data/installer/SudachiDict-LEGAL.txt" "${STAGE_DIR}/usr/share/doc/${PKG_NAME}/SudachiDict-LEGAL.txt"
 fi

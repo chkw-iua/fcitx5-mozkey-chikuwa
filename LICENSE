@@ -27,3 +27,20 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+--------------------------------------------------------------------------------
+Component License Summary:
+
+1. unix/fcitx5/ Frontend:
+   - mozc_engine.*, mozc_engine_factory.cc, i18nwrapper.h:
+     Licensed under GNU Lesser General Public License version 2.1 or later (LGPL-2.1+).
+   - Other C++ files:
+     Licensed under BSD-3-Clause (Google Inc. and Weng Xuetian).
+   - Combined shared library (fcitx5-mozkey.so):
+     Distributed under LGPL-2.1+ (or LGPL-3.0+ when linked with Apache-2.0 Abseil).
+
+2. Upstream Subprojects & Bundled Binaries:
+   - upstream/ (Mozc / Mozkey): BSD-3-Clause (Google Inc. and koyasi777).
+   - llama.cpp / llama-server: MIT License (Georgi Gerganov and llama.cpp contributors).
+   - Zenz model (zenz-v3.2-small-Q5_K_M.gguf):
+     Apache License 2.0 (Keita Miwa) / CC BY-SA 4.0 Base Model (Kyoto University KU-NLP).
