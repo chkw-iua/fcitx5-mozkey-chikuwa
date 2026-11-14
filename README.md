@@ -15,12 +15,11 @@
 
 1. [主な特徴](#主な特徴)
 2. [動作要件](#動作要件)
-3. [クイックスタート (.deb の導入と初期設定)](#クイックスタート-deb-の導入と初期設定)
+3. [インストール](#インストール)
 4. [設定と活用ガイド](#設定と活用ガイド)
 5. [トラブルシューティング / よくある質問 (FAQ)](#トラブルシューティング--よくある質問-faq)
-6. [ソースコードからのビルド (開発者・上級者向け)](#ソースコードからのビルド-開発者上級者向け)
-7. [アーキテクチャと安全設計](#アーキテクチャと安全設計)
-8. [ライセンス・著作権表示・謝辞](#ライセンス著作権表示謝辞)
+6. [アーキテクチャと安全設計](#アーキテクチャと安全設計)
+7. [ライセンス・著作権表示・謝辞](#ライセンス著作権表示謝辞)
 
 ---
 
@@ -45,9 +44,9 @@
 
 ---
 
-## クイックスタート (.deb の導入と初期設定)
+## インストール
 
-配布されているビルド済み `.deb` パッケージ（[Releases](https://github.com/chkw-iua/fcitx5-mozkey-chikuwa/releases) 等から入手、または下記の「[ソースコードからのビルド](#ソースコードからのビルド-開発者上級者向け)」で生成）を使用してセットアップします。
+本リポジトリのソースコードからコンポーネントをビルドし、生成した `.deb` パッケージをインストールしてセットアップします。
 
 ### 前提: Fcitx5 の準備（Ubuntu 標準 IBus から切り替える場合）
 
@@ -60,22 +59,91 @@ im-config -n fcitx5
 ```
 ※ `im-config` 実行後、設定を反映するために一度ログアウトして再ログイン（またはシステム再起動）してください。
 
-### Step 1: パッケージのインストール
-
-入手した `.deb` パッケージを `apt` 経由で依存パッケージとともにインストールし、Fcitx5 デーモンを再起動します（ダウンロードしたファイル名・パスに合わせて読み替えてください）：
+### Step 1: ビルド前提パッケージのインストール
 
 ```bash
-# 例: ダウンロードした .deb ファイルがあるディレクトリで実行
 sudo apt update
-sudo apt install ./fcitx5-mozkey-chikuwa_<version>_amd64.deb
+sudo apt install -y build-essential cmake ninja-build git python3 pkg-config \
+  libfcitx5core-dev libfcitx5config-dev libfcitx5utils-dev \
+  qt6-base-dev libqt6core6t64 libqt6gui6 libqt6widgets6 libqt6dbus6 \
+  libssl-dev dpkg-dev
+
+# Bazelisk の準備（PATH の通った場所に配置）
+# https://github.com/bazelbuild/bazelisk/releases からダウンロードし、
+# 例: ~/.local/bin/bazelisk に配置して実行権限を付与します。
+```
+
+### Step 2: ソースコードのチェックアウトとパッチ適用
+
+```bash
+# 上流 Mozkey リポジトリのクローンと Linux 向けパッチ適用
+git clone --depth 1 --branch v1.1.0 https://github.com/koyasi777/mozkey.git upstream
+git -C upstream apply ../packaging/patches/upstream-linux-port.patch
+cp -a unix/fcitx5 upstream/src/unix/fcitx5
+
+# llama.cpp のクローンと監視パイプ・文字トークナイザーパッチ適用
+git init llama.cpp
+git -C llama.cpp remote add origin https://github.com/ggml-org/llama.cpp.git
+git -C llama.cpp fetch --depth 1 origin 620d2225cc436ab0b001e3200e590e3b286ef9ab
+git -C llama.cpp checkout --detach FETCH_HEAD
+git -C llama.cpp apply ../packaging/patches/llama-cpp-linux-mozkey.patch
+
+# llama-server のビルド (-ffile-prefix-map でビルド環境の絶対パス焼き付きを防止)
+cmake -B llama.cpp/build -S llama.cpp -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_SHARED_LIBS=OFF \
+  -DLLAMA_CURL=OFF \
+  -DCMAKE_C_FLAGS="-ffile-prefix-map=${PWD}/llama.cpp=." \
+  -DCMAKE_CXX_FLAGS="-ffile-prefix-map=${PWD}/llama.cpp=."
+cmake --build llama.cpp/build --target llama-server -j"$(nproc)"
+```
+
+### Step 3: Bazel ビルドと .deb パッケージ作成
+
+#### (A) 既定（sample 辞書）でビルドする場合
+```bash
+cd upstream/src
+ANDROID_NDK_HOME= bazelisk build --config=no_sframe \
+  //server:mozc_server //gui/tool:mozc_tool \
+  //zenz_scorer:mozc_zenz_scorer //zenz_scorer:mozc_zenz_guard \
+  //unix/fcitx5:fcitx5-mozkey.so
+cd ../..
+
+# .deb パッケージ生成（packaging/out/ に出力されます）
+./packaging/build_deb.sh
+```
+
+#### (B) オプション: `daily` 辞書を組み込む場合
+外部辞書（`merge-ut`、`dic-nico-intersection-pixiv`、`mozcdic-ut-personal-names`、Wikipedia 見出しインデックス）を SHA-256 検証付きで取得・生成して組み込みます（`daily` 有効時は `DICTIONARY_NOTICES.md` および `SudachiDict-LEGAL.txt` が `/usr/share/doc/fcitx5-mozkey-chikuwa/` に自動同梱されます）：
+
+```bash
+# daily 辞書のダウンロードとビルド設定
+python3 packaging/prepare_daily_dictionary_linux.py
+
+cd upstream/src
+ANDROID_NDK_HOME= bazelisk build --config=no_sframe \
+  //server:mozc_server //gui/tool:mozc_tool \
+  //zenz_scorer:mozc_zenz_scorer //zenz_scorer:mozc_zenz_guard \
+  //unix/fcitx5:fcitx5-mozkey.so
+cd ../..
+./packaging/build_deb.sh
+```
+
+> **参考**: 辞書構成をリポジトリ既定 (`sample`) に戻す場合は、`python3 packaging/prepare_daily_dictionary_linux.py --switch-only --profile sample` を実行してください。
+
+### Step 4: パッケージのインストール
+
+生成された `packaging/out/` 配下の `.deb` パッケージを `apt` 経由でインストールし、Fcitx5 デーモンを再起動します：
+
+```bash
+# 生成された .deb パッケージのインストール
+sudo apt install ./packaging/out/fcitx5-mozkey-chikuwa_*_amd64.deb
 
 # Fcitx5 を再起動してアドオンを認識させる
 fcitx5 -r -d
 ```
 
-> ソースコードから自分でビルドした場合は、生成先である `packaging/out/` 配下の `.deb` ファイル（例: `./packaging/out/fcitx5-mozkey-chikuwa_*_amd64.deb`）を指定してください。
-
-### Step 2: Fcitx5 への Mozkey の追加
+### Step 5: Fcitx5 への Mozkey の追加
 
 1. **Fcitx5 設定画面を開く**:
    - システムトレイのキーボードアイコンを右クリックして「設定」を開くか、端末で `fcitx5-configtool` を実行します。
@@ -89,11 +157,19 @@ fcitx5 -r -d
      2. **Mozkey**
 3. **「適用」をクリック** して設定を保存します。
 
-### Step 3: 入力の切り替えとタイピング
+### Step 6: 入力の切り替えとタイピング
 
 - **`Ctrl + Space`** または **`半角/全角`** キーを押して Mozkey に切り替えます。
 - システムトレイのインジケーターが **「あ」** になっていれば入力準備完了です。
 - テキストエディタやブラウザ等でそのままローマ字を入力してください。タイピングに合わせてリアルタイムに漢字仮名変換が行われます。
+
+### オプション: ローカルステージング環境でのテスト (`start_local_mozkey.sh`)
+
+システムにインストールせず、`~/.local` 配下に成果物を展開してローカルテストを行う場合は以下のスクリプトを利用できます：
+
+```bash
+./start_local_mozkey.sh --restart-server
+```
 
 ---
 
@@ -170,109 +246,20 @@ Mozkey の設定や学習データは、Ubuntu 標準の Mozc とは完全に分
   ```
 
 ### Q4: アンインストール手順
-Mozkey をアンインストールしてシステムをクリーンに戻すには、以下のコマンドを実行します：
+Mozkey をアンインストールするには、以下のコマンドを実行します：
 
 ```bash
-# パッケージの完全削除（設定ファイル含む）
-sudo apt purge fcitx5-mozkey-chikuwa
+sudo apt remove fcitx5-mozkey-chikuwa
 
 # Fcitx5 を再起動
 fcitx5 -r -d
-```
-※ ユーザー設定や個人辞書（`~/.config/mozkey/`）を残したい場合は `sudo apt remove fcitx5-mozkey-chikuwa` を使用してください。
-
----
-
-## ソースコードからのビルド (開発者・上級者向け)
-
-本リポジトリのソースコードからコンポーネントをコンパイルし、`.deb` パッケージを新規生成する手順です。
-
-### 1. ビルド前提パッケージのインストール
-
-```bash
-sudo apt update
-sudo apt install -y build-essential cmake ninja-build git python3 pkg-config \
-  libfcitx5core-dev libfcitx5config-dev libfcitx5utils-dev \
-  qt6-base-dev libqt6core6t64 libqt6gui6 libqt6widgets6 libqt6dbus6 \
-  libssl-dev dpkg-dev
-
-# Bazelisk の準備（PATH の通った場所に配置）
-# https://github.com/bazelbuild/bazelisk/releases からダウンロードし、
-# 例: ~/.local/bin/bazelisk に配置して実行権限を付与します。
-```
-
-### 2. ソースコードのチェックアウトとパッチ適用
-
-```bash
-# 上流 Mozkey リポジトリのクローンと Linux 向けパッチ適用
-git clone --depth 1 --branch v1.1.0 https://github.com/koyasi777/mozkey.git upstream
-git -C upstream apply ../packaging/patches/upstream-linux-port.patch
-cp -a unix/fcitx5 upstream/src/unix/fcitx5
-
-# llama.cpp のクローンと監視パイプ・文字トークナイザーパッチ適用
-git init llama.cpp
-git -C llama.cpp remote add origin https://github.com/ggml-org/llama.cpp.git
-git -C llama.cpp fetch --depth 1 origin 620d2225cc436ab0b001e3200e590e3b286ef9ab
-git -C llama.cpp checkout --detach FETCH_HEAD
-git -C llama.cpp apply ../packaging/patches/llama-cpp-linux-mozkey.patch
-
-# llama-server のビルド (-ffile-prefix-map でビルド環境の絶対パス焼き付きを防止)
-cmake -B llama.cpp/build -S llama.cpp -G Ninja \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DBUILD_SHARED_LIBS=OFF \
-  -DLLAMA_CURL=OFF \
-  -DCMAKE_C_FLAGS="-ffile-prefix-map=${PWD}/llama.cpp=." \
-  -DCMAKE_CXX_FLAGS="-ffile-prefix-map=${PWD}/llama.cpp=."
-cmake --build llama.cpp/build --target llama-server -j"$(nproc)"
-```
-
-### 3. Bazel ビルドと .deb パッケージ作成
-
-#### (A) 既定（sample 辞書）でビルドする場合
-```bash
-cd upstream/src
-ANDROID_NDK_HOME= bazelisk build --config=no_sframe \
-  //server:mozc_server //gui/tool:mozc_tool \
-  //zenz_scorer:mozc_zenz_scorer //zenz_scorer:mozc_zenz_guard \
-  //unix/fcitx5:fcitx5-mozkey.so
-cd ../..
-
-# .deb パッケージ生成（packaging/out/ に出力されます）
-./packaging/build_deb.sh
-```
-
-#### (B) オプション: `daily` 辞書を組み込む場合
-外部辞書（`merge-ut`、`dic-nico-intersection-pixiv`、`mozcdic-ut-personal-names`、Wikipedia 見出しインデックス）を SHA-256 検証付きで取得・生成して組み込みます（`daily` 有効時は `DICTIONARY_NOTICES.md` および `SudachiDict-LEGAL.txt` が `/usr/share/doc/fcitx5-mozkey-chikuwa/` に自動同梱されます）：
-
-```bash
-# daily 辞書のダウンロードとビルド設定
-python3 packaging/prepare_daily_dictionary_linux.py
-
-cd upstream/src
-ANDROID_NDK_HOME= bazelisk build --config=no_sframe \
-  //server:mozc_server //gui/tool:mozc_tool \
-  //zenz_scorer:mozc_zenz_scorer //zenz_scorer:mozc_zenz_guard \
-  //unix/fcitx5:fcitx5-mozkey.so
-cd ../..
-./packaging/build_deb.sh
-
-# 辞書構成をリポジトリ既定 (sample) に戻す場合
-python3 packaging/prepare_daily_dictionary_linux.py --switch-only --profile sample
-```
-
-### 4. ローカルステージング環境でのテスト (`start_local_mozkey.sh`)
-
-システムにインストールせず、`~/.local` 配下に成果物を展開してローカルテストを行う場合は以下のスクリプトを利用できます：
-
-```bash
-./start_local_mozkey.sh --restart-server
 ```
 
 ---
 
 ## アーキテクチャと安全設計
 
-本プロジェクトは、システム標準の `fcitx5-mozc` やデスクトップ環境と衝突しないよう、徹底したプロセス分離とリソースの独立性を確保して設計されています。
+本プロジェクトは、システム標準の `fcitx5-mozc` やデスクトップ環境と衝突しないよう、プロセス分離とリソースの独立性を確保して設計されています。
 
 ```text
 [ GUI アプリケーション ] (ブラウザ、エディタ、端末など)
