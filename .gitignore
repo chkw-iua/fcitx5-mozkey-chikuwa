@@ -1,0 +1,6 @@
+upstream/
+llama.cpp/
+packaging/out/
+.agents/
+__pycache__/
+*.pyc

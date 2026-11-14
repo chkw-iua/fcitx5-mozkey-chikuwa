@@ -1,0 +1,462 @@
+diff --git a/src/MODULE.bazel b/src/MODULE.bazel
+index e0b2d02..c9b9dba 100644
+--- a/src/MODULE.bazel
++++ b/src/MODULE.bazel
+@@ -205,6 +205,17 @@ pkg_config_repository(
+     ],
+ )
+ 
++# Fcitx5
++pkg_config_repository(
++    name = "fcitx5",
++    packages = [
++        "Fcitx5Config",
++        "Fcitx5Core",
++        "Fcitx5Module",
++        "Fcitx5Utils",
++    ],
++)
++
+ # Qt for Linux
+ pkg_config_repository(
+     name = "qt_linux",
+diff --git a/src/base/system_util.cc b/src/base/system_util.cc
+index 7c33821..ead92a2 100644
+--- a/src/base/system_util.cc
++++ b/src/base/system_util.cc
+@@ -488,6 +488,36 @@ std::string GetMozcInstallDirFromRegistry() {
+ 
+ std::string SystemUtil::GetServerDirectory() {
+   if constexpr (port::IsLinuxBase() || port::IsWasm()) {
++    if (const char* override_dir = std::getenv("MOZKEY_SERVER_DIR");
++        override_dir != nullptr && override_dir[0] != '\0') {
++      return std::string(override_dir);
++    }
++#if defined(__linux__)
++    if (!FileUtil::FileExists(
++             FileUtil::JoinPath(kMozcServerDir, kMozcServerName))
++             .ok()) {
++      char exe_buf[4096] = {};
++      const ssize_t len =
++          ::readlink("/proc/self/exe", exe_buf, sizeof(exe_buf) - 1);
++      if (len > 0) {
++        exe_buf[len] = '\0';
++        const std::string exe_dir = FileUtil::Dirname(exe_buf);
++        if (FileUtil::FileExists(FileUtil::JoinPath(exe_dir, kMozcServerName))
++                .ok()) {
++          return exe_dir;
++        }
++      }
++      if (const char* home = std::getenv("HOME");
++          home != nullptr && home[0] != '\0') {
++        const std::string local_dir =
++            FileUtil::JoinPath(home, ".local/lib/mozkey");
++        if (FileUtil::FileExists(FileUtil::JoinPath(local_dir, kMozcServerName))
++                .ok()) {
++          return local_dir;
++        }
++      }
++    }
++#endif  // __linux__
+     return std::string(kMozcServerDir);
+   }
+ 
+diff --git a/src/data/dictionary_oss/BUILD.bazel b/src/data/dictionary_oss/BUILD.bazel
+index 3ce4d23..2ee24eb 100644
+--- a/src/data/dictionary_oss/BUILD.bazel
++++ b/src/data/dictionary_oss/BUILD.bazel
+@@ -71,7 +71,7 @@ filegroup(
+         "dictionary07.txt",
+         "dictionary08.txt",
+         "dictionary09.txt",
+-        "//data/dictionary_koyasi:mozcdic_ut_daily_local",
++        "//data/dictionary_koyasi:mozcdic_ut_sample",
+         "//dictionary:zip_code_data",
+     ],
+     visibility = ["//visibility:private"],
+diff --git a/src/session/BUILD.bazel b/src/session/BUILD.bazel
+index 5d12906..79a6c86 100644
+--- a/src/session/BUILD.bazel
++++ b/src/session/BUILD.bazel
+@@ -245,6 +245,11 @@ mozc_cc_library(
+         "@com_google_absl//absl/strings",
+         "@com_google_absl//absl/time",
+     ] + mozc_select(
++        linux = [
++            "//base:file_util",
++            "//base:process",
++            "//base:system_util",
++        ],
+         macos = [
+             "//base:file_util",
+             "//base:process",
+@@ -261,6 +266,9 @@ mozc_cc_test(
+         ":session",
+         "//testing:gunit_main",
+     ] + mozc_select(
++        linux = [
++            "//base:process",
++        ],
+         macos = [
+             "//base:process",
+         ],
+diff --git a/src/session/zenz_client_factory.cc b/src/session/zenz_client_factory.cc
+index 9337539..013f120 100644
+--- a/src/session/zenz_client_factory.cc
++++ b/src/session/zenz_client_factory.cc
+@@ -7,7 +7,9 @@
+ 
+ #if defined(__APPLE__)
+ #include <TargetConditionals.h>
+-#if TARGET_OS_OSX
++#endif  // __APPLE__
++
++#if (defined(__APPLE__) && TARGET_OS_OSX) || defined(__linux__)
+ #include <sys/types.h>
+ #include <sys/wait.h>
+ 
+@@ -19,8 +21,7 @@
+ #include "base/file_util.h"
+ #include "base/process.h"
+ #include "base/system_util.h"
+-#endif  // TARGET_OS_OSX
+-#endif  // __APPLE__
++#endif  // (__APPLE__ && TARGET_OS_OSX) || __linux__
+ 
+ #include "session/zenz_live_corrector.h"
+ #include "session/zenz_named_pipe_client.h"
+@@ -30,9 +31,9 @@
+ namespace mozc {
+ namespace session {
+ 
+-#if defined(__APPLE__) && TARGET_OS_OSX
++#if (defined(__APPLE__) && TARGET_OS_OSX) || defined(__linux__)
+ // Testable implementation shared by the production scorer launcher and the
+-// macOS regression test. Do not alter child ownership or SIGCHLD handling.
++// POSIX regression test. Do not alter child ownership or SIGCHLD handling.
+ namespace internal {
+ // MozcConverter is the scorer's parent and lives for the whole login session.
+ // The scorer can exit on its own (startup failure, losing the singleton lock
+@@ -51,17 +52,17 @@ void ReapScorerAsync(pid_t pid) {
+ }
+ 
+ }  // namespace internal
+-#endif  // __APPLE__ && TARGET_OS_OSX
++#endif  // (__APPLE__ && TARGET_OS_OSX) || __linux__
+ 
+ namespace {
+ 
+-#if defined(__APPLE__) && TARGET_OS_OSX
++#if (defined(__APPLE__) && TARGET_OS_OSX) || defined(__linux__)
+ 
+ constexpr char kZenzRuntimeDirectory[] = "ZenzRuntime";
+ constexpr char kZenzScorerExecutable[] = "mozc_zenz_scorer";
+ constexpr auto kScorerLaunchThrottle = std::chrono::seconds(2);
+ 
+-bool LaunchMacZenzScorer() {
++bool LaunchPosixZenzScorer() {
+   // MozcConverter is normally a singleton, but several Zenz worker requests
+   // can observe the same cold start. Serialize the short spawn operation and
+   // treat a recent successful launch as one already in progress.
+@@ -95,17 +96,17 @@ bool LaunchMacZenzScorer() {
+   return true;
+ }
+ 
+-#endif  // __APPLE__ && TARGET_OS_OSX
++#endif  // (__APPLE__ && TARGET_OS_OSX) || __linux__
+ 
+ }  // namespace
+ 
+ std::unique_ptr<ZenzClient> CreateZenzClient() {
+-#if defined(__APPLE__) && TARGET_OS_OSX
++#if (defined(__APPLE__) && TARGET_OS_OSX) || defined(__linux__)
+   return std::make_unique<ZenzUnixSocketClient>(
+-      ::mozc::zenz::GetZenzUnixSocketPath(), &LaunchMacZenzScorer);
++      ::mozc::zenz::GetZenzUnixSocketPath(), &LaunchPosixZenzScorer);
+ #else
+   return std::make_unique<ZenzNamedPipeClient>();
+-#endif  // __APPLE__ && TARGET_OS_OSX
++#endif  // (__APPLE__ && TARGET_OS_OSX) || __linux__
+ }
+ 
+ }  // namespace session
+diff --git a/src/zenz_scorer/BUILD.bazel b/src/zenz_scorer/BUILD.bazel
+index 899dbd0..dc39444 100644
+--- a/src/zenz_scorer/BUILD.bazel
++++ b/src/zenz_scorer/BUILD.bazel
+@@ -8,6 +8,12 @@ load(
+ 
+ package(default_visibility = ["//visibility:private"])
+ 
++POSIX_COMPAT = select({
++    "@platforms//os:macos": [],
++    "@platforms//os:linux": [],
++    "//conditions:default": ["@platforms//:incompatible"],
++})
++
+ mozc_cc_test(
+     name = "synchronous_io_deadline_test",
+     size = "small",
+@@ -23,14 +29,14 @@ mozc_cc_library(
+     name = "llama_http_client",
+     srcs = ["llama_http_client.cc"],
+     hdrs = ["llama_http_client.h"],
+-    target_compatible_with = ["@platforms//os:macos"],
++    target_compatible_with = POSIX_COMPAT,
+ )
+ 
+ mozc_cc_test(
+     name = "llama_http_client_test",
+     size = "small",
+     srcs = ["llama_http_client_test.cc"],
+-    target_compatible_with = ["@platforms//os:macos"],
++    target_compatible_with = POSIX_COMPAT,
+     deps = [
+         ":llama_http_client",
+         "//testing:gunit_main",
+@@ -44,7 +50,7 @@ mozc_cc_library(
+         "llama_server_guard_protocol.h",
+         "llama_server_process.h",
+     ],
+-    target_compatible_with = ["@platforms//os:macos"],
++    target_compatible_with = POSIX_COMPAT,
+     deps = [":llama_http_client"],
+ )
+ 
+@@ -54,14 +60,14 @@ mozc_cc_binary(
+         "llama_server_guard.cc",
+         "llama_server_guard_protocol.h",
+     ],
+-    target_compatible_with = ["@platforms//os:macos"],
+-    visibility = ["//mac/installer/zenz_runtime:__pkg__"],
++    target_compatible_with = POSIX_COMPAT,
++    visibility = ["//visibility:public"],
+ )
+ 
+ mozc_cc_binary(
+     name = "llama_server_process_test_helper",
+     srcs = ["llama_server_process_test_helper.cc"],
+-    target_compatible_with = ["@platforms//os:macos"],
++    target_compatible_with = POSIX_COMPAT,
+ )
+ 
+ mozc_cc_test(
+@@ -72,7 +78,7 @@ mozc_cc_test(
+         ":llama_server_process_test_helper",
+         ":mozc_zenz_guard",
+     ],
+-    target_compatible_with = ["@platforms//os:macos"],
++    target_compatible_with = POSIX_COMPAT,
+     deps = [
+         ":llama_server_process",
+         "//testing:gunit_main",
+@@ -83,7 +89,7 @@ mozc_cc_library(
+     name = "llama_backend",
+     srcs = ["llama_backend.cc"],
+     hdrs = ["llama_backend.h"],
+-    target_compatible_with = ["@platforms//os:macos"],
++    target_compatible_with = POSIX_COMPAT,
+     deps = [
+         ":llama_http_client",
+         ":posix_server",
+@@ -95,7 +101,7 @@ mozc_cc_test(
+     name = "llama_backend_integration_test",
+     size = "small",
+     srcs = ["llama_backend_integration_test.cc"],
+-    target_compatible_with = ["@platforms//os:macos"],
++    target_compatible_with = POSIX_COMPAT,
+     deps = [
+         ":llama_backend",
+         ":posix_server",
+@@ -108,7 +114,7 @@ mozc_cc_library(
+     name = "posix_runtime",
+     srcs = ["posix_runtime.cc"],
+     hdrs = ["posix_runtime.h"],
+-    target_compatible_with = ["@platforms//os:macos"],
++    target_compatible_with = POSIX_COMPAT,
+     deps = [
+         ":llama_backend",
+         ":llama_server_process",
+@@ -125,7 +131,7 @@ mozc_cc_test(
+         ":llama_server_process_test_helper",
+         ":mozc_zenz_guard",
+     ],
+-    target_compatible_with = ["@platforms//os:macos"],
++    target_compatible_with = POSIX_COMPAT,
+     deps = [
+         ":posix_runtime",
+         "//testing:gunit_main",
+@@ -137,7 +143,7 @@ mozc_cc_library(
+     name = "posix_server",
+     srcs = ["posix_server.cc"],
+     hdrs = ["posix_server.h"],
+-    target_compatible_with = ["@platforms//os:macos"],
++    target_compatible_with = POSIX_COMPAT,
+     deps = [
+         "//zenz:unix_socket_path",
+         "//zenz:wire_protocol",
+@@ -148,7 +154,7 @@ mozc_cc_test(
+     name = "posix_server_test",
+     size = "small",
+     srcs = ["posix_server_test.cc"],
+-    target_compatible_with = ["@platforms//os:macos"],
++    target_compatible_with = POSIX_COMPAT,
+     deps = [
+         ":posix_server",
+         "//testing:gunit_main",
+@@ -160,6 +166,7 @@ mozc_cc_binary(
+     name = "mozc_zenz_scorer",
+     srcs = select({
+         "@platforms//os:macos": ["main_posix.cc"],
++        "@platforms//os:linux": ["main_posix.cc"],
+         "@platforms//os:windows": [
+             "main.cc",
+             "synchronous_io_deadline.h",
+@@ -177,6 +184,7 @@ mozc_cc_binary(
+     }),
+     target_compatible_with = select({
+         "@platforms//os:macos": [],
++        "@platforms//os:linux": [],
+         "@platforms//os:windows": [],
+         "//conditions:default": ["@platforms//:incompatible"],
+     }),
+@@ -186,6 +194,10 @@ mozc_cc_binary(
+             ":posix_runtime",
+             "//zenz:unix_socket_path",
+         ],
++        "@platforms//os:linux": [
++            ":posix_runtime",
++            "//zenz:unix_socket_path",
++        ],
+         "@platforms//os:windows": [":mozc_zenz_scorer_resources"],
+         "//conditions:default": [],
+     }),
+@@ -202,7 +214,7 @@ mozc_win32_resource_from_template(
+ mozc_cc_binary(
+     name = "zenz_runtime_package_probe",
+     srcs = ["zenz_runtime_package_probe.cc"],
+-    target_compatible_with = ["@platforms//os:macos"],
++    target_compatible_with = POSIX_COMPAT,
+     deps = [
+         "//zenz:unix_socket_path",
+         "//zenz:wire_protocol",
+diff --git a/src/zenz_scorer/llama_server_guard.cc b/src/zenz_scorer/llama_server_guard.cc
+index e25fb02..066127c 100644
+--- a/src/zenz_scorer/llama_server_guard.cc
++++ b/src/zenz_scorer/llama_server_guard.cc
+@@ -1,7 +1,7 @@
+ // Dedicated owner of a single llama-server child.  The scorer is the only
+ // writer of the lifetime pipe; EOF also works when the scorer is SIGKILLed.
+-#if !defined(__APPLE__)
+-#error "llama_server_guard is only supported on macOS"
++#if defined(_WIN32)
++#error "llama_server_guard must not be built on Windows"
+ #endif
+ 
+ #include <cerrno>
+diff --git a/src/zenz_scorer/llama_server_process.cc b/src/zenz_scorer/llama_server_process.cc
+index 0bb2456..df620e0 100644
+--- a/src/zenz_scorer/llama_server_process.cc
++++ b/src/zenz_scorer/llama_server_process.cc
+@@ -18,7 +18,11 @@
+ #include <vector>
+ 
+ #include <arpa/inet.h>
++#if defined(__APPLE__)
+ #include <crt_externs.h>
++#else
++extern char** environ;
++#endif
+ #include <fcntl.h>
+ #include <netinet/in.h>
+ #include <poll.h>
+@@ -522,7 +526,8 @@ bool LlamaServerProcess::Spawn(std::string* error) {
+   }
+ 
+   // macOS SO_NOSIGPIPE prevents a dead guard from terminating the scorer
+-  // while transferring a 64-byte key. No global signal handler is changed.
++  // while transferring a 64-byte key. On Linux, send(..., MSG_NOSIGNAL) is
++  // used instead so no global signal handler is changed.
+ #if defined(SO_NOSIGPIPE)
+   const int enabled = 1;
+   if (::setsockopt(key_channel[0], SOL_SOCKET, SO_NOSIGPIPE,
+@@ -534,7 +539,7 @@ bool LlamaServerProcess::Spawn(std::string* error) {
+     *error = "guard_key_channel_nosigpipe_failed";
+     return false;
+   }
+-#else
++#elif !defined(MSG_NOSIGNAL)
+   ClosePipe(output_pipe);
+   ClosePipe(lifetime_pipe);
+   ClosePipe(startup_pipe);
+@@ -598,8 +603,13 @@ bool LlamaServerProcess::Spawn(std::string* error) {
+   }
+   pid_t guard_pid = -1;
+   if (result == 0) {
++#if defined(__APPLE__)
++    char** spawn_env = *_NSGetEnviron();
++#else
++    char** spawn_env = environ;
++#endif
+     result = ::posix_spawn(&guard_pid, options_.guard_executable_path.c_str(),
+-                           &actions, &attributes, argv.data(), *_NSGetEnviron());
++                           &actions, &attributes, argv.data(), spawn_env);
+   }
+   if (attr_initialized) {
+     ::posix_spawnattr_destroy(&attributes);
+@@ -628,8 +638,12 @@ bool LlamaServerProcess::Spawn(std::string* error) {
+   bool key_sent = true;
+   size_t key_bytes = 0;
+   while (key_bytes < api_key_.size()) {
++    int send_flags = 0;
++#if defined(MSG_NOSIGNAL)
++    send_flags = MSG_NOSIGNAL;
++#endif
+     const ssize_t sent = ::send(key_channel[0],
+-        api_key_.data() + key_bytes, api_key_.size() - key_bytes, 0);
++        api_key_.data() + key_bytes, api_key_.size() - key_bytes, send_flags);
+     if (sent > 0) {
+       key_bytes += static_cast<size_t>(sent);
+     } else if (sent < 0 && errno == EINTR) {
+diff --git a/src/zenz_scorer/main_posix.cc b/src/zenz_scorer/main_posix.cc
+index 1c3d25f..be7480d 100644
+--- a/src/zenz_scorer/main_posix.cc
++++ b/src/zenz_scorer/main_posix.cc
+@@ -7,7 +7,11 @@
+ #include <vector>
+ 
+ #include <limits.h>
++#if defined(__APPLE__)
+ #include <mach-o/dyld.h>
++#elif defined(__linux__)
++#include <unistd.h>
++#endif
+ 
+ #include "zenz/zenz_unix_socket_path.h"
+ #include "zenz_scorer/posix_runtime.h"
+@@ -34,6 +38,7 @@ std::string JoinPath(std::string_view directory, std::string_view name) {
+ }
+ 
+ std::string GetExecutablePath() {
++#if defined(__APPLE__)
+   uint32_t size = PATH_MAX;
+   std::vector<char> buffer(size, '\0');
+   if (_NSGetExecutablePath(buffer.data(), &size) != 0) {
+@@ -48,6 +53,17 @@ std::string GetExecutablePath() {
+     return resolved;
+   }
+   return buffer.data();
++#elif defined(__linux__)
++  char resolved[PATH_MAX] = {};
++  const ssize_t len = ::readlink("/proc/self/exe", resolved, sizeof(resolved) - 1);
++  if (len <= 0) {
++    return "";
++  }
++  resolved[len] = '\0';
++  return std::string(resolved, static_cast<size_t>(len));
++#else
++  return "";
++#endif
+ }
+ 
+ std::string DirectoryName(std::string_view path) {

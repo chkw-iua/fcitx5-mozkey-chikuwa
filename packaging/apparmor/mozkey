@@ -1,0 +1,3 @@
+# Allow AppArmor-confined clients that include abstractions/mozc to connect
+# to Mozkey's separate abstract Unix socket namespace (@tmp/.mozkey.*).
+  unix (connect, receive, send) type=stream peer=(addr="@tmp/.mozkey.*"),
